@@ -15,7 +15,7 @@ def get_ai_reply(user_msg):
             "Content-Type": "application/json"
         }
         data = {
-            "model": "llama3-8b-8192",
+            "model": "openai/gpt-oss-20b",
             "messages": [
                 {"role": "system", "content": "Nuvu Nainu vi, Vijayawada nundi. Telugu + English mix lo short, cool, friendly ga matladu. User ni bro ani piluvu."},
                 {"role": "user", "content": user_msg}
@@ -35,11 +35,11 @@ def get_ai_reply(user_msg):
         if "choices" in j:
             return j["choices"][0]["message"]["content"]
         else:
-            return f"Groq Error: {j} - Key check chey bro!"
+            return f"Groq Error: {j.get('error', {}).get('message', j)}"
             
     except Exception as e:
         print(f"Groq Exception: {e}")
-        return "Bro koncham busy unna, 2 sec tarwata malli adugu! 😅"
+        return "Bro koncham busy unna, malli adugu! 😅"
 
 def send_telegram(chat_id, text):
     try:
@@ -50,24 +50,22 @@ def send_telegram(chat_id, text):
 
 @app.route('/')
 def home():
-    return "TheGroqaibot LIVE 🚀 - Webhook Mode"
+    return "TheGroqaibot LIVE 🚀"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
         data = request.get_json()
         print(f"Incoming: {data}")
-        
         if "message" in data and "text" in data["message"]:
             chat_id = data["message"]["chat"]["id"]
             text = data["message"]["text"]
             
             if text == "/start":
-                send_telegram(chat_id, "Hey bro! Nenu Nainu AI! FINAL ga LIVE ayya! 🔥 Adugu em kavalo?")
+                send_telegram(chat_id, "Hey bro! Nenu Nainu AI! LIVE ayya FINAL ga! 🔥 Adugu em kavalo?")
             else:
                 reply = get_ai_reply(text)
                 send_telegram(chat_id, reply)
-                
     except Exception as e:
         print(f"Webhook error: {e}")
     return "ok", 200
@@ -82,6 +80,6 @@ if __name__ == "__main__":
     try:
         requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url=https://thegroqaibot.onrender.com/webhook&drop_pending_updates=True", timeout=10)
         print("✅ Webhook set!")
-    except Exception as e:
-        print(f"Webhook set error: {e}")
+    except:
+        pass
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
