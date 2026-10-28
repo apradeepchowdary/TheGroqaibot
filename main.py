@@ -4,93 +4,102 @@ from flask import Flask, request
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_KEY = os.getenv("GROQ_KEY")
+TAVILY_KEY = os.getenv("TAVILY_API_KEY")
 app = Flask(__name__)
+
+def search_live(query):
+    if not TAVILY_KEY or len(query) < 10:
+        return None
+    try:
+        r = requests.post("https://api.tavily.com/search", json={
+            "api_key": TAVILY_KEY,
+            "query": query,
+            "max_results": 3,
+            "include_answer": True
+        }, timeout=15).json()
+        txt = ""
+        for x in r.get("results", [])[:2]:
+            txt += x.get("content","")[:400] + " "
+        return txt or r.get("answer")
+    except:
+        return None
 
 def get_btc_price():
     try:
         r = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,inr", timeout=10).json()
-        usd = r['bitcoin']['usd']
-        inr = r['bitcoin']['inr']
-        return f"${usd:,} (₹{inr:,})"
-    except:
-        return None
+        return f"${r['bitcoin']['usd']:,} (₹{r['bitcoin']['inr']:,})"
+    except: return None
 
 def get_ai_reply(user_msg):
     low = user_msg.lower()
+    extra = ""
+    
+    if "btc" in low or "bitcoin" in low:
+        p = get_btc_price()
+        if p: extra += f" LIVE BTC Price = {p}. "
+    
+    # News aithe live search
+    if len(user_msg) > 15:
+        live = search_live(user_msg[:250])
+        if live: extra += f" LIVE INFO: {live} "
 
-    # 1. BTC LIVE price
-    if "bitcoin" in low or "btc" in low:
-        price = get_btc_price()
-        if price:
-            return f"Yo bro! Bitcoin LIVE price: {price} 🚀 Ippudu market chudu bro!"
+    headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
+    system_prompt = f"""You are GROQ AI.
 
-    # 2. News details adigithe hallucinate cheyaku
-    if "more about this news" in low or "aa news gurinchi" in low:
-        return "Bro naku live search ledu, forward chesina news meeda matrame matladagalanu bro. Nee opinion enti? 🤔"
+    ULTRA STRICT RULES - BREAK CHEYAKU:
+    1. You are GROQ AI. If asked 'nuvvu evaru?' say 'Nenu Groq AI ni bro!'
+    2. EVERY WORD YOU WRITE MUST BE TELUGU IN ENGLISH LETTERS. No full English sentences. 
+    3. Example style: 'Brazil lo election roju companies stablecoin konnayi bro, currency padakunda undataniki, safe plan bro idhi'
+    4. If you explain a word, explain in Telugish only: 'Stablecoin ante dollar ki fix ayina crypto bro, value taggadu'
+    5. NEVER write like 'crypto asset that's pegged to a fiat'. NEVER.
+    6. Keep reply 4-5 lines max, cool bro style.
+    7. Use this live data: {extra}
+    8. Never say 'live ledu' - you have live data.
+    """
 
+    data = {
+        "model": "openai/gpt-oss-20b",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_msg}
+        ],
+        "temperature": 0.7,
+        "max_tokens": 400
+    }
     try:
-        headers = {
-            "Authorization": f"Bearer {GROQ_KEY}",
-            "Content-Type": "application/json"
-        }
-        data = {
-            "model": "openai/gpt-oss-20b",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": """You are GROQ AI.
-
-                    RULES - VERY IMPORTANT:
-                    1. You are GROQ AI only. If user asks 'nuvvu evaru?' say 'Nenu Groq AI ni bro!'.
-                    2. ALWAYS reply in TELUGU written with ENGLISH LETTERS ONLY. Example: 'ela unnav bro?', 'emi chestunnav?', 'nenu Groq AI ni'. NEVER use Telugu script like 'ఏం'.
-                    3. Mix 70% Telugu (in English letters) + 30% English. Short, cool, friendly.
-                    4. Always call user 'bro'.
-                    5. Don't guess live prices or news - if you don't know, say you don't have live search."""
-                },
-                {"role": "user", "content": user_msg}
-            ],
-            "temperature": 0.7,
-            "max_tokens": 400
-        }
-        r = requests.post("https://api.groq.com/openai/v1/chat/completions", json=data, headers=headers, timeout=20)
-        j = r.json()
-        if "choices" in j:
-            return j["choices"][0]["message"]["content"]
-        else:
-            print("Groq Error:", j)
-            return "Bro koncham error vachindi, malli adugu bro! 😅"
+        r = requests.post("https://api.groq.com/openai/v1/chat/completions", json=data, headers=headers, timeout=25).json()
+        return r["choices"][0]["message"]["content"]
     except Exception as e:
-        print("Exception:", e)
-        return "Bro busy ga unna, 1 nimisham tarvata adugu bro! 😅"
+        print(e)
+        return "Bro koncham error vachindi, malli pampu bro!"
 
 def send_telegram(chat_id, text):
-    try:
-        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": text}, timeout=10)
-    except Exception as e:
-        print("Telegram send error:", e)
+    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": text})
 
 @app.route('/')
-def home():
-    return "GROQ AI BOT LIVE 🚀 - Telugish Mode"
+def home(): return "GROQ AI - Full Telugish + Live ON"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
-    if data and "message" in data and "text" in data["message"]:
-        chat_id = data["message"]["chat"]["id"]
-        text = data["message"]["text"]
-        
+    if not data: return "ok", 200
+    msg = data.get("message") or data.get("channel_post") or data.get("edited_message")
+    if not msg: return "ok", 200
+    
+    chat_id = msg.get("chat", {}).get("id")
+    text = msg.get("text") or msg.get("caption") or ""
+    
+    if text and chat_id:
+        text = text.replace("News | Markets | YouTube", "").strip()
         if text == "/start":
-            send_telegram(chat_id, "Hey bro! Nenu Groq AI ni! 🔥 Naku emaina adugu - antha Telugish lo chepta bro!")
+            send_telegram(chat_id, "Hey bro! Nenu Groq AI ni! Ippudu full Telugish lo, LIVE search tho chepta bro! Emaina forward chey!")
         else:
-            reply = get_ai_reply(text)
-            send_telegram(chat_id, reply)
+            send_telegram(chat_id, get_ai_reply(text))
     return "ok", 200
 
 @app.route('/setwebhook')
 def set_webhook():
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url=https://thegroqaibot.onrender.com/webhook&drop_pending_updates=True"
-    r = requests.get(url)
+    r = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url=https://thegroqaibot.onrender.com/webhook&drop_pending_updates=True")
     return r.text
 
 if __name__ == "__main__":
